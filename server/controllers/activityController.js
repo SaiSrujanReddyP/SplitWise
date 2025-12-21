@@ -1,10 +1,14 @@
 const activityService = require('../services/activityService');
+const { parsePaginationParams } = require('../utils/pagination');
 
 const getActivities = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
-    const activities = await activityService.getUserActivities(req.userId, limit);
-    res.json(activities);
+    const { limit, page, cursor } = parsePaginationParams(req.query);
+    const result = await activityService.getUserActivities(
+      req.userId, 
+      { limit, page, cursor }
+    );
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -12,9 +16,12 @@ const getActivities = async (req, res) => {
 
 const getGroupActivities = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
-    const activities = await activityService.getGroupActivities(req.params.groupId, limit);
-    res.json(activities);
+    const { limit, page, cursor } = parsePaginationParams(req.query);
+    const result = await activityService.getGroupActivities(
+      req.params.groupId, 
+      { limit, page, cursor }
+    );
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

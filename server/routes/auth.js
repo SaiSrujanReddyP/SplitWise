@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
+const { authLimiter } = require('../middleware/rateLimiter');
 
-router.post('/signup', authController.signup);
-router.post('/login', authController.login);
+// Apply stricter rate limiting to auth routes
+router.post('/signup', authLimiter, authController.signup);
+router.post('/login', authLimiter, authController.login);
 
 module.exports = router;

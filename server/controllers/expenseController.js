@@ -1,4 +1,5 @@
 const expenseService = require('../services/expenseService');
+const { parsePaginationParams, paginatedResponse } = require('../utils/pagination');
 
 const createExpense = async (req, res) => {
   try {
@@ -14,8 +15,13 @@ const createExpense = async (req, res) => {
 
 const getExpensesByGroup = async (req, res) => {
   try {
-    const expenses = await expenseService.getExpensesByGroup(req.params.groupId, req.userId);
-    res.json(expenses);
+    const { limit, page, cursor } = parsePaginationParams(req.query);
+    const result = await expenseService.getExpensesByGroup(
+      req.params.groupId, 
+      req.userId,
+      { limit, page, cursor }
+    );
+    res.json(result);
   } catch (err) {
     res.status(404).json({ error: err.message });
   }
@@ -32,9 +38,12 @@ const getExpenseById = async (req, res) => {
 
 const getUserExpenses = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
-    const expenses = await expenseService.getUserExpenses(req.userId, limit);
-    res.json(expenses);
+    const { limit, page, cursor } = parsePaginationParams(req.query);
+    const result = await expenseService.getUserExpenses(
+      req.userId, 
+      { limit, page, cursor }
+    );
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

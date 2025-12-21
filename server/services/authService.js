@@ -20,7 +20,7 @@ const signup = async (name, email, password) => {
 };
 
 const login = async (email, password) => {
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email }).select('+password');
   if (!user) {
     throw new Error('Invalid credentials');
   }

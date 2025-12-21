@@ -1,8 +1,26 @@
+/**
+ * Balance Service - Unified interface for balance management
+ * 
+ * This service provides backwards compatibility while using the new
+ * scalable Balance collection under the hood.
+ * 
+ * Design Decision: Facade pattern
+ * - Maintains existing API for controllers
+ * - Delegates to balanceServiceV2 for actual operations
+ * - Supports gradual migration from embedded to separate collection
+ */
+
 const Group = require('../models/Group');
+const Balance = require('../models/Balance');
 const DirectBalance = require('../models/DirectBalance');
 const User = require('../models/User');
 const { BalanceCalculator } = require('../../shared');
-const lockManager = require('../utils/lockManager');
+const { withLock } = require('../utils/distributedLock');
+const { cache, cacheKeys } = require('../config/redis');
+const balanceServiceV2 = require('./balanceServiceV2');
+
+// Use V2 service by default (set to false for legacy behavior)
+const USE_V2 = process.env.USE_BALANCE_V2 !== 'false';
 
 /**
  * Convert Mongoose Map to plain object for BalanceCalculator
@@ -37,17 +55,20 @@ const objectToMap = (obj) => {
 
 /**
  * Update group balances after an expense
- * Uses lock manager to prevent race conditions
  */
-const updateBalances = async (groupId, payerId, splits) => {
-  return lockManager.withLock(groupId, async () => {
+const updateBalances = async (groupId, payerId, splits, expenseId = null) => {
+  if (USE_V2) {
+    return balanceServiceV2.updateBalances(groupId, payerId, splits, expenseId);
+  }
+
+  // Legacy implementation using embedded Map
+  return withLock(`group:${groupId}`, async () => {
     const group = await Group.findById(groupId);
     if (!group) throw new Error('Group not found');
 
     const calculator = new BalanceCalculator();
     calculator.loadBalances(mapToObject(group.balances));
 
-    // Each split represents what someone owes the payer
     for (const split of splits) {
       calculator.addDebt(split.userId, payerId, split.amount);
     }
@@ -62,7 +83,12 @@ const updateBalances = async (groupId, payerId, splits) => {
 /**
  * Update direct (non-group) balances between users
  */
-const updateDirectBalances = async (payerId, splits) => {
+const updateDirectBalances = async (payerId, splits, expenseId = null) => {
+  if (USE_V2) {
+    return balanceServiceV2.updateDirectBalances(payerId, splits, expenseId);
+  }
+
+  // Legacy implementation using DirectBalance collection
   for (const split of splits) {
     if (split.userId === payerId.toString()) continue;
     
@@ -70,14 +96,12 @@ const updateDirectBalances = async (payerId, splits) => {
     const creditorId = payerId.toString();
     const amount = split.amount;
 
-    // Check if reverse balance exists (creditor owes debtor)
     const reverseBalance = await DirectBalance.findOne({
       debtor: creditorId,
       creditor: debtorId
     });
 
     if (reverseBalance && reverseBalance.amount > 0) {
-      // Simplify: cancel out mutual debts
       if (reverseBalance.amount >= amount) {
         reverseBalance.amount -= amount;
         reverseBalance.lastUpdated = new Date();
@@ -87,7 +111,6 @@ const updateDirectBalances = async (payerId, splits) => {
         reverseBalance.amount = 0;
         await reverseBalance.save();
         
-        // Add remaining to forward balance
         await DirectBalance.findOneAndUpdate(
           { debtor: debtorId, creditor: creditorId },
           { $inc: { amount: remaining }, lastUpdated: new Date() },
@@ -95,7 +118,6 @@ const updateDirectBalances = async (payerId, splits) => {
         );
       }
     } else {
-      // No reverse balance, just add to forward
       await DirectBalance.findOneAndUpdate(
         { debtor: debtorId, creditor: creditorId },
         { $inc: { amount: amount }, lastUpdated: new Date() },
@@ -109,9 +131,12 @@ const updateDirectBalances = async (payerId, splits) => {
  * Get balances for a group
  */
 const getGroupBalances = async (groupId) => {
+  if (USE_V2) {
+    return balanceServiceV2.getGroupBalances(groupId);
+  }
+
   const group = await Group.findById(groupId).populate('members', 'name email');
   if (!group) throw new Error('Group not found');
-
   return mapToObject(group.balances);
 };
 
@@ -119,11 +144,15 @@ const getGroupBalances = async (groupId) => {
  * Get user's balances across all groups AND direct balances
  */
 const getUserBalances = async (userId) => {
+  if (USE_V2) {
+    return balanceServiceV2.getUserBalances(userId);
+  }
+
+  // Legacy implementation
   const groups = await Group.find({ members: userId }).populate('members', 'name email');
   
   const calculator = new BalanceCalculator();
   
-  // Aggregate balances from all groups
   for (const group of groups) {
     const groupBalances = mapToObject(group.balances);
     for (const [debtor, creditors] of Object.entries(groupBalances)) {
@@ -133,7 +162,6 @@ const getUserBalances = async (userId) => {
     }
   }
 
-  // Add direct balances (non-group)
   const directOwes = await DirectBalance.find({ debtor: userId, amount: { $gt: 0 } });
   const directOwed = await DirectBalance.find({ creditor: userId, amount: { $gt: 0 } });
 
@@ -144,24 +172,17 @@ const getUserBalances = async (userId) => {
     calculator.addDebt(db.debtor.toString(), db.creditor.toString(), db.amount);
   }
 
-  // Get user-specific balances
   const userBalances = calculator.getUserBalances(userId);
   
-  // Collect all user IDs we need to look up
   const userIds = new Set();
   for (const group of groups) {
     for (const member of group.members) {
       userIds.add(member._id.toString());
     }
   }
-  for (const db of directOwes) {
-    userIds.add(db.creditor.toString());
-  }
-  for (const db of directOwed) {
-    userIds.add(db.debtor.toString());
-  }
+  for (const db of directOwes) userIds.add(db.creditor.toString());
+  for (const db of directOwed) userIds.add(db.debtor.toString());
 
-  // Fetch all users
   const users = await User.find({ _id: { $in: Array.from(userIds) } }).select('name email');
   const allUsers = new Map();
   for (const user of users) {
@@ -184,12 +205,15 @@ const getUserBalances = async (userId) => {
 };
 
 /**
- * Settle a balance - works for both group and direct balances
+ * Settle a balance
  */
 const settleBalance = async (groupId, debtorId, creditorId, amount) => {
+  if (USE_V2) {
+    return balanceServiceV2.settleBalance(groupId, debtorId, creditorId, amount);
+  }
+
   const activityService = require('./activityService');
   
-  // If groupId is 'direct', settle direct balance
   if (groupId === 'direct') {
     const directBalance = await DirectBalance.findOne({
       debtor: debtorId,
@@ -204,19 +228,17 @@ const settleBalance = async (groupId, debtorId, creditorId, amount) => {
     directBalance.lastUpdated = new Date();
     await directBalance.save();
 
-    // Log settlement activity
     await activityService.logActivity('settlement', debtorId, {
       amount,
       fromUser: debtorId,
       toUser: creditorId,
-      description: `Direct settlement of $${amount.toFixed(2)}`
+      description: `Direct settlement of ${amount.toFixed(2)}`
     });
 
     return { settled: true };
   }
 
-  // Group settlement
-  const result = await lockManager.withLock(groupId, async () => {
+  const result = await withLock(`group:${groupId}`, async () => {
     const group = await Group.findById(groupId);
     if (!group) throw new Error('Group not found');
 
@@ -224,9 +246,7 @@ const settleBalance = async (groupId, debtorId, creditorId, amount) => {
     calculator.loadBalances(mapToObject(group.balances));
 
     const success = calculator.settleDebt(debtorId, creditorId, amount);
-    if (!success) {
-      throw new Error('Invalid settlement amount');
-    }
+    if (!success) throw new Error('Invalid settlement amount');
 
     group.balances = objectToMap(calculator.getBalances());
     await group.save();
@@ -234,14 +254,13 @@ const settleBalance = async (groupId, debtorId, creditorId, amount) => {
     return { balances: calculator.getBalances(), groupName: group.name };
   });
 
-  // Log settlement activity
   await activityService.logActivity('settlement', debtorId, {
     groupId,
     amount,
     fromUser: debtorId,
     toUser: creditorId,
     groupName: result.groupName,
-    description: `Settlement of $${amount.toFixed(2)}`
+    description: `Settlement of ${amount.toFixed(2)}`
   });
 
   return result.balances;
@@ -251,9 +270,12 @@ const settleBalance = async (groupId, debtorId, creditorId, amount) => {
  * Get balance details (which expenses contributed to a balance)
  */
 const getBalanceDetails = async (userId, otherUserId) => {
+  if (USE_V2) {
+    return balanceServiceV2.getBalanceDetails(userId, otherUserId);
+  }
+
   const Expense = require('../models/Expense');
   
-  // Find expenses where either user paid and the other is in splits
   const expenses = await Expense.find({
     $or: [
       { paidBy: userId, 'splits.userId': otherUserId },

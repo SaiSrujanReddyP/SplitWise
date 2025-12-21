@@ -4,6 +4,7 @@
 
 - Node.js (v18+ recommended, v22 supported)
 - MongoDB Atlas account (free tier works)
+- Redis (optional but recommended for production)
 - npm
 
 ---
@@ -40,7 +41,26 @@
 
 ---
 
-## 2. Application Setup
+## 2. Redis Setup (Optional but Recommended)
+
+### Option A: Local Redis (Docker)
+```bash
+docker run -d -p 6379:6379 --name redis redis
+```
+
+### Option B: Redis Cloud (Free Tier)
+1. Go to https://redis.com/try-free/
+2. Create a free database
+3. Copy the connection string
+
+### Option C: Skip Redis
+The application works without Redis but with reduced performance:
+- No caching (every request hits MongoDB)
+- In-memory locks only (single instance)
+
+---
+
+## 3. Application Setup
 
 ### Install Dependencies
 
@@ -64,8 +84,15 @@ npm link
 Create `server/.env`:
 ```env
 PORT=5000
+NODE_ENV=development
 MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@cluster0.xxxxx.mongodb.net/expense-sharing?retryWrites=true&w=majority
 JWT_SECRET=my-super-secret-key-12345
+
+# Optional: Redis for caching and distributed locks
+REDIS_URL=redis://localhost:6379
+
+# Use new scalable balance service
+USE_BALANCE_V2=true
 ```
 
 ### Configure Client Environment
@@ -77,28 +104,68 @@ VITE_API_URL=http://localhost:5000/api
 
 ---
 
-## 3. Start the Application
+## 4. Start the Application
 
 ### Terminal 1 - Start Server
 ```bash
 cd server
 npm start
 ```
-Expected: `Server running on port 5000` and `MongoDB connected`
+Expected output:
+```
+✅ MongoDB connected
+⚠️  REDIS_URL not set - running without cache (not recommended for production)
+✅ Job queues initialized
+🚀 Server running on port 5000
+📊 Health check: http://localhost:5000/health
+```
+
+With Redis:
+```
+✅ MongoDB connected
+✅ Redis connected
+✅ Distributed lock manager initialized
+✅ Job queues initialized
+🚀 Server running on port 5000
+```
 
 ### Terminal 2 - Start Client
 ```bash
 cd client
 npm run dev
 ```
-Expected: Opens at http://localhost:3000
+Expected: Opens at http://localhost:5173
 
 ---
 
-## 4. Frontend Testing
+## 5. Health Check
 
-### 4.1 Authentication
-- [ ] Navigate to http://localhost:3000
+```bash
+curl http://localhost:5000/health
+```
+
+Expected response:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-12-21T10:30:00.000Z",
+  "services": {
+    "redis": "connected",
+    "locks": 0
+  },
+  "queues": {
+    "activities": { "processed": 0, "failed": 0, "pending": 0 },
+    "balances": { "processed": 0, "failed": 0, "pending": 0 }
+  }
+}
+```
+
+---
+
+## 6. Frontend Testing
+
+### 6.1 Authentication
+- [ ] Navigate to http://localhost:5173
 - [ ] Click "Get Started" → Sign up with test credentials
 - [ ] Create multiple test users:
   - `alice@test.com` / `password123`
@@ -106,21 +173,21 @@ Expected: Opens at http://localhost:3000
   - `charlie@test.com` / `password123`
 - [ ] Logout and login to verify
 
-### 4.2 Dashboard
+### 6.2 Dashboard
 - [ ] View balance summary cards (You Owe, Owed to You, Net Balance)
 - [ ] Click "Add Expense" button → Modal opens
 - [ ] View "Balance Details" section (combined view of all balances)
 - [ ] View Recent Activity section
 - [ ] View Your Groups section
 
-### 4.3 Balance Details Modal
+### 6.3 Balance Details Modal
 - [ ] Click the ℹ️ button next to any balance
 - [ ] Modal shows total amount owed
 - [ ] Modal shows list of related expenses with dates
 - [ ] Expenses sorted by date (most recent first)
 - [ ] "Go to Settlements" link works
 
-### 4.4 Add Expense Modal (from Dashboard)
+### 6.4 Add Expense Modal (from Dashboard)
 
 #### Group Expense
 - [ ] Select a group from dropdown
@@ -137,12 +204,12 @@ Expected: Opens at http://localhost:3000
 - [ ] Submit expense
 - [ ] **Verify**: Balance appears in Dashboard for both users
 
-### 4.5 Split Types Testing
+### 6.5 Split Types Testing
 - [ ] **Equal Split**: Add $90 expense with 3 people, verify $30 each
 - [ ] **Exact Split**: Add $100 expense, specify exact amounts per person
 - [ ] **Percentage Split**: Add $100 expense, specify percentages (must ≤ 100%)
 
-### 4.6 Groups
+### 6.6 Groups
 - [ ] Create a group: "Trip to Paris"
 - [ ] Add members by email
 - [ ] View group details
@@ -150,7 +217,7 @@ Expected: Opens at http://localhost:3000
 - [ ] View group balances
 - [ ] View settlement suggestions
 
-### 4.7 Settlements Page
+### 6.7 Settlements Page
 - [ ] View "You Owe" section with Settle buttons
 - [ ] View "Owed to You" section
 - [ ] View "Suggested Settlements" (minimal transactions)
@@ -168,16 +235,17 @@ Expected: Opens at http://localhost:3000
 - [ ] Enter amount and submit
 - [ ] Verify balance reduces
 
-### 4.8 Activity Tracking
-- [ ] Add an expense → Check Dashboard Recent Activity
-- [ ] Settle a balance → Check Settlements Recent Settlements
-- [ ] Verify activities show correct user, amount, date
+### 6.8 Pagination Testing
+- [ ] Create 25+ expenses in a group
+- [ ] Verify expenses load in pages
+- [ ] Scroll to load more (if infinite scroll implemented)
+- [ ] Or click "Load More" / pagination controls
 
 ---
 
-## 5. CLI Testing
+## 7. CLI Testing
 
-### 5.1 Setup
+### 7.1 Setup
 
 ```bash
 # Login and get token
@@ -187,7 +255,7 @@ expense-cli login -e alice@test.com -p password123
 set EXPENSE_CLI_TOKEN=your_token_here
 ```
 
-### 5.2 Test All Commands
+### 7.2 Test All Commands
 
 ```bash
 # List groups (formatted table)
@@ -222,50 +290,43 @@ expense-cli activity
 expense-cli activity -l 20
 ```
 
-### 5.3 Expected CLI Output
+---
 
+## 8. Scalability Testing
+
+### 8.1 Rate Limiting
+```bash
+# Test rate limiting (should get 429 after ~100 requests)
+for i in {1..120}; do curl -s http://localhost:5000/api/groups -H "Authorization: Bearer $TOKEN" & done
 ```
-📁 Your Groups
 
-┌────────────────────┬────────────────────────────┬──────────────────────────────┐
-│ Name               │ ID                         │ Members                      │
-├────────────────────┼────────────────────────────┼──────────────────────────────┤
-│ Trip to Paris      │ 6748081a122bac69a8246938   │ Alice, Bob, Charlie          │
-└────────────────────┴────────────────────────────┴──────────────────────────────┘
+### 8.2 Caching (requires Redis)
+```bash
+# First request (cache miss)
+time curl http://localhost:5000/api/balances -H "Authorization: Bearer $TOKEN"
 
-💰 Your Balances
+# Second request (cache hit - should be faster)
+time curl http://localhost:5000/api/balances -H "Authorization: Bearer $TOKEN"
+```
 
-┌──────────────┬─────────┐
-│ You Owe      │ $50.00  │
-├──────────────┼─────────┤
-│ Owed to You  │ $120.00 │
-├──────────────┼─────────┤
-│ Net Balance  │ $70.00  │
-└──────────────┴─────────┘
+### 8.3 Health Check Monitoring
+```bash
+# Watch queue stats
+watch -n 1 'curl -s http://localhost:5000/health | jq'
+```
 
-🔄 Settlement Suggestions
+### 8.4 Pagination
+```bash
+# Get first page
+curl "http://localhost:5000/api/expenses/mine?limit=10" -H "Authorization: Bearer $TOKEN"
 
-┌───┬─────────┬─────────┬─────────┐
-│ # │ From    │ To      │ Amount  │
-├───┼─────────┼─────────┼─────────┤
-│ 1 │ Bob     │ Alice   │ $50.00  │
-│ 2 │ Charlie │ Alice   │ $20.00  │
-└───┴─────────┴─────────┴─────────┘
-
-📋 Recent Activity
-
-┌────────────┬─────────────────────────┬─────────┬────────────┐
-│ Type       │ Description             │ User    │ Date       │
-├────────────┼─────────────────────────┼─────────┼────────────┤
-│ Expense    │ Dinner - $90.00         │ Alice   │ 12/21/2025 │
-│ Settlement │ $50.00 to Alice         │ Bob     │ 12/21/2025 │
-│ Expense    │ Gas - $120.00           │ Alice   │ 12/20/2025 │
-└────────────┴─────────────────────────┴─────────┴────────────┘
+# Get next page using cursor
+curl "http://localhost:5000/api/expenses/mine?limit=10&cursor=CURSOR_FROM_RESPONSE" -H "Authorization: Bearer $TOKEN"
 ```
 
 ---
 
-## 6. API Testing (curl)
+## 9. API Testing (curl)
 
 ```bash
 # Set token
@@ -280,8 +341,8 @@ curl http://localhost:5000/api/balances/details/USER_ID -H "Authorization: Beare
 # Get settlement suggestions
 curl http://localhost:5000/api/balances/settlements -H "Authorization: Bearer %TOKEN%"
 
-# Get recent activities
-curl http://localhost:5000/api/activities -H "Authorization: Bearer %TOKEN%"
+# Get recent activities (paginated)
+curl "http://localhost:5000/api/activities?limit=10" -H "Authorization: Bearer %TOKEN%"
 
 # Search users
 curl "http://localhost:5000/api/expenses/search-users?q=bob" -H "Authorization: Bearer %TOKEN%"
@@ -301,21 +362,21 @@ curl -X POST http://localhost:5000/api/balances/settle ^
 
 ---
 
-## 7. Feature Verification
+## 10. Feature Verification
 
-### 7.1 Balance Simplification
+### 10.1 Balance Simplification
 Test that mutual debts cancel out:
 1. Alice pays $60 (Bob, Charlie split equal) → Bob owes Alice $20, Charlie owes Alice $20
 2. Bob pays $30 (Alice, Charlie split equal) → Alice owes Bob $10, Charlie owes Bob $10
 3. **Verify**: Bob owes Alice $10 (not $20), because $20 - $10 = $10
 
-### 7.2 Settlement Algorithm
+### 10.2 Settlement Algorithm
 Test minimal transactions:
 1. Create complex debts between 3+ users
 2. Run `expense-cli settlements`
 3. Verify the number of transactions is minimized
 
-### 7.3 Direct (Non-Group) Balances
+### 10.3 Direct (Non-Group) Balances
 1. From Dashboard, click "Add Expense"
 2. Leave group as "No group - select users manually"
 3. Search and select a user
@@ -325,35 +386,43 @@ Test minimal transactions:
 7. Click ℹ️ to see expense details
 8. Settle using "Direct Settlement" option
 
-### 7.4 Activity Tracking
-1. Add an expense → Activity logged as `expense_added`
-2. Settle a balance → Activity logged as `settlement`
-3. Check Dashboard → Recent Activity shows both
-4. Check Settlements → Recent Settlements shows settlement
+### 10.4 Caching Verification (with Redis)
+1. Make a request to `/api/balances`
+2. Check Redis: `redis-cli GET "balances:user:USER_ID"`
+3. Make same request again (should be faster)
+4. Add an expense
+5. Check Redis again (cache should be invalidated)
 
-### 7.5 Balance Details Modal
-1. Create several expenses with another user
-2. On Dashboard, click ℹ️ next to their balance
-3. Verify modal shows all related expenses
-4. Verify sorted by date (most recent first)
-5. Verify total matches the balance amount
+### 10.5 Background Jobs
+1. Add an expense
+2. Check health endpoint for queue stats
+3. Verify `activities.processed` increased
 
 ---
 
-## 8. Verify Data in MongoDB Compass
+## 11. Verify Data in MongoDB Compass
 
 1. Open MongoDB Compass
 2. Connect to your Atlas cluster
 3. View `expense-sharing` database:
    - `users` - Registered users
-   - `groups` - Groups with embedded balances
-   - `expenses` - All expenses (with or without group)
+   - `groups` - Groups with members
+   - `expenses` - All expenses (with indexes)
    - `activities` - Activity log entries
-   - `directbalances` - Non-group balances between users
+   - `balances` - NEW: Scalable balance storage
+   - `directbalances` - Legacy (if USE_BALANCE_V2=false)
+
+### Check Indexes
+```javascript
+// In MongoDB Compass, run:
+db.expenses.getIndexes()
+db.activities.getIndexes()
+db.balances.getIndexes()
+```
 
 ---
 
-## 9. Checklist Summary
+## 12. Checklist Summary
 
 | Feature | Frontend | CLI | API |
 |---------|----------|-----|-----|
@@ -373,19 +442,47 @@ Test minimal transactions:
 | Date Selection | [ ] | N/A | [ ] |
 | Non-Group Expenses | [ ] | N/A | [ ] |
 | Balance Details Modal | [ ] | N/A | [ ] |
+| Pagination | [ ] | N/A | [ ] |
+| Rate Limiting | N/A | N/A | [ ] |
+| Caching (Redis) | N/A | N/A | [ ] |
+| Health Check | N/A | N/A | [ ] |
 
 ---
 
-## 10. Troubleshooting
+## 13. Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | MongoDB connection error | Check Atlas connection string, username/password, IP whitelist |
+| Redis connection error | Check REDIS_URL, ensure Redis is running |
 | CORS error | Ensure server is running on port 5000 |
 | 401 Unauthorized | Token expired - login again |
+| 429 Too Many Requests | Rate limited - wait 1 minute |
 | CLI command not found | Run `npm link` in cli folder |
 | CLI colors not showing | Use Windows Terminal or PowerShell 7+ |
-| Direct balances not showing | Restart server to load DirectBalance model |
+| Balances not updating | Check if USE_BALANCE_V2=true in .env |
+| Cache not working | Check Redis connection in health endpoint |
+| Slow requests | Check if Redis is connected (caching disabled without it) |
 | User search returns empty | Query must be at least 2 characters |
-| Settlement fails | Check if settling group balance in correct group, or use "direct" for non-group |
-| Balance details empty | Expenses must involve both users (payer and participant) |
+| Settlement fails | Check if settling group balance in correct group |
+
+---
+
+## 14. Performance Benchmarks
+
+Expected performance with Redis caching:
+
+| Operation | Without Cache | With Cache |
+|-----------|--------------|------------|
+| Get user balances | ~50ms | ~5ms |
+| Get group balances | ~30ms | ~3ms |
+| List expenses (20) | ~80ms | ~80ms |
+| Add expense | ~100ms | ~100ms |
+| Health check | ~5ms | ~5ms |
+
+To measure:
+```bash
+# Install hyperfine for benchmarking
+# Then run:
+hyperfine 'curl -s http://localhost:5000/api/balances -H "Authorization: Bearer TOKEN"'
+```

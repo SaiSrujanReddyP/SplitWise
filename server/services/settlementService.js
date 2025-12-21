@@ -15,10 +15,31 @@
  */
 
 const Group = require('../models/Group');
-const { mapToObject } = require('./balanceService');
+const Balance = require('../models/Balance');
+const User = require('../models/User');
+const { cache, cacheKeys } = require('../config/redis');
+
+const USE_V2 = process.env.USE_BALANCE_V2 !== 'false';
+const SETTLEMENT_CACHE_TTL = 300; // 5 minutes
 
 /**
- * Calculate net balances for all users in a group
+ * Convert Mongoose Map to plain object
+ */
+const mapToObject = (map) => {
+  if (!map) return {};
+  const obj = {};
+  for (const [key, value] of map.entries()) {
+    if (value instanceof Map) {
+      obj[key] = mapToObject(value);
+    } else {
+      obj[key] = value;
+    }
+  }
+  return obj;
+};
+
+/**
+ * Calculate net balances for all users from balance matrix
  * Positive = user is owed money, Negative = user owes money
  */
 function calculateNetBalances(balances) {
@@ -37,13 +58,30 @@ function calculateNetBalances(balances) {
 }
 
 /**
+ * Calculate net balances from Balance collection documents
+ */
+function calculateNetBalancesFromDocs(balanceDocs) {
+  const netBalances = {};
+
+  for (const b of balanceDocs) {
+    const debtor = b.debtor.toString();
+    const creditor = b.creditor.toString();
+    const amount = b.amount;
+
+    netBalances[debtor] = (netBalances[debtor] || 0) - amount;
+    netBalances[creditor] = (netBalances[creditor] || 0) + amount;
+  }
+
+  return netBalances;
+}
+
+/**
  * Generate minimal settlement transactions using greedy algorithm
  * 
- * @param {Object} balances - Balance matrix from group
+ * @param {Object} netBalances - Net balance per user
  * @returns {Array} Array of { from, to, amount } transactions
  */
-function generateSettlements(balances) {
-  const netBalances = calculateNetBalances(balances);
+function generateSettlementsFromNetBalances(netBalances) {
   const transactions = [];
 
   // Separate into creditors and debtors
@@ -94,16 +132,38 @@ function generateSettlements(balances) {
 }
 
 /**
+ * Generate settlements from balance matrix (legacy format)
+ */
+function generateSettlements(balances) {
+  const netBalances = calculateNetBalances(balances);
+  return generateSettlementsFromNetBalances(netBalances);
+}
+
+/**
  * Get settlement suggestions for a group
  */
 async function getGroupSettlements(groupId) {
+  // Try cache first
+  const cached = await cache.get(cacheKeys.groupSettlements(groupId));
+  if (cached) return cached;
+
   const group = await Group.findById(groupId).populate('members', 'name email');
   if (!group) {
     throw new Error('Group not found');
   }
 
-  const balances = mapToObject(group.balances);
-  const settlements = generateSettlements(balances);
+  let settlements;
+
+  if (USE_V2) {
+    // Use new Balance collection
+    const balanceDocs = await Balance.find({ group: groupId, amount: { $gt: 0 } });
+    const netBalances = calculateNetBalancesFromDocs(balanceDocs);
+    settlements = generateSettlementsFromNetBalances(netBalances);
+  } else {
+    // Use legacy embedded balances
+    const balances = mapToObject(group.balances);
+    settlements = generateSettlements(balances);
+  }
 
   // Enrich with user names
   const userMap = {};
@@ -111,53 +171,94 @@ async function getGroupSettlements(groupId) {
     userMap[m._id.toString()] = { name: m.name, email: m.email };
   });
 
-  return settlements.map(s => ({
+  const result = settlements.map(s => ({
     ...s,
     fromUser: userMap[s.from] || { name: 'Unknown' },
     toUser: userMap[s.to] || { name: 'Unknown' }
   }));
+
+  // Cache the result
+  await cache.set(cacheKeys.groupSettlements(groupId), result, SETTLEMENT_CACHE_TTL);
+
+  return result;
 }
 
 /**
  * Get global settlement suggestions across all groups for a user
  */
 async function getUserSettlements(userId) {
-  const Group = require('../models/Group');
-  const groups = await Group.find({ members: userId }).populate('members', 'name email');
+  // Try cache first
+  const cached = await cache.get(cacheKeys.settlements(userId));
+  if (cached) return cached;
 
-  // Aggregate all balances
-  const globalBalances = {};
+  let settlements;
   const userMap = {};
 
-  for (const group of groups) {
-    const balances = mapToObject(group.balances);
+  if (USE_V2) {
+    // Get all balances where user is involved
+    const [owesBalances, owedBalances] = await Promise.all([
+      Balance.find({ debtor: userId, amount: { $gt: 0 } }),
+      Balance.find({ creditor: userId, amount: { $gt: 0 } })
+    ]);
+
+    // Combine all balances
+    const allBalances = [...owesBalances, ...owedBalances];
     
-    // Build user map
-    group.members.forEach(m => {
-      userMap[m._id.toString()] = { name: m.name, email: m.email };
+    // Get unique user IDs
+    const userIds = new Set();
+    allBalances.forEach(b => {
+      userIds.add(b.debtor.toString());
+      userIds.add(b.creditor.toString());
     });
 
-    // Merge balances
-    for (const [debtor, creditors] of Object.entries(balances)) {
-      if (!globalBalances[debtor]) globalBalances[debtor] = {};
-      for (const [creditor, amount] of Object.entries(creditors)) {
-        globalBalances[debtor][creditor] = (globalBalances[debtor][creditor] || 0) + amount;
+    // Fetch user details
+    const users = await User.find({ _id: { $in: Array.from(userIds) } }).select('name email');
+    users.forEach(u => {
+      userMap[u._id.toString()] = { name: u.name, email: u.email };
+    });
+
+    const netBalances = calculateNetBalancesFromDocs(allBalances);
+    settlements = generateSettlementsFromNetBalances(netBalances);
+  } else {
+    // Legacy: aggregate from all groups
+    const groups = await Group.find({ members: userId }).populate('members', 'name email');
+    const globalBalances = {};
+
+    for (const group of groups) {
+      const balances = mapToObject(group.balances);
+      
+      group.members.forEach(m => {
+        userMap[m._id.toString()] = { name: m.name, email: m.email };
+      });
+
+      for (const [debtor, creditors] of Object.entries(balances)) {
+        if (!globalBalances[debtor]) globalBalances[debtor] = {};
+        for (const [creditor, amount] of Object.entries(creditors)) {
+          globalBalances[debtor][creditor] = (globalBalances[debtor][creditor] || 0) + amount;
+        }
       }
     }
+
+    settlements = generateSettlements(globalBalances);
   }
 
-  const settlements = generateSettlements(globalBalances);
-
-  return settlements.map(s => ({
+  const result = settlements.map(s => ({
     ...s,
     fromUser: userMap[s.from] || { name: 'Unknown' },
     toUser: userMap[s.to] || { name: 'Unknown' }
   }));
+
+  // Cache the result
+  await cache.set(cacheKeys.settlements(userId), result, SETTLEMENT_CACHE_TTL);
+
+  return result;
 }
 
 module.exports = {
   generateSettlements,
+  generateSettlementsFromNetBalances,
   getGroupSettlements,
   getUserSettlements,
-  calculateNetBalances
+  calculateNetBalances,
+  calculateNetBalancesFromDocs
 };

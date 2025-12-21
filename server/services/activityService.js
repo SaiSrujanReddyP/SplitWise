@@ -1,4 +1,5 @@
 const Activity = require('../models/Activity');
+const { buildCursorQuery, paginatedResponse } = require('../utils/pagination');
 
 /**
  * Log an activity
@@ -22,41 +23,65 @@ const logActivity = async (type, userId, data) => {
 };
 
 /**
- * Get recent activities for a user
+ * Get recent activities for a user (with pagination)
  */
-const getUserActivities = async (userId, limit = 20) => {
+const getUserActivities = async (userId, options = {}) => {
+  const { limit = 20, page = 1, cursor = null } = options;
+
   // Get user's groups
   const Group = require('../models/Group');
   const groups = await Group.find({ members: userId }).select('_id');
   const groupIds = groups.map(g => g._id);
 
-  // Get activities from user's groups or involving the user
-  const activities = await Activity.find({
+  const query = {
     $or: [
       { user: userId },
       { group: { $in: groupIds } }
     ]
-  })
+  };
+
+  const cursorQuery = cursor ? buildCursorQuery(cursor, 'next', 'createdAt', -1) : {};
+  const finalQuery = { ...query, ...cursorQuery };
+
+  const activities = await Activity.find(finalQuery)
     .populate('user', 'name email')
     .populate('group', 'name')
     .populate('data.fromUser', 'name')
     .populate('data.toUser', 'name')
     .sort({ createdAt: -1 })
-    .limit(limit);
+    .limit(limit + 1);
 
-  return activities;
+  const hasMore = activities.length > limit;
+  if (hasMore) activities.pop();
+
+  const total = cursor ? null : await Activity.countDocuments(query);
+
+  return paginatedResponse(activities, { limit, page, cursor, total });
 };
 
 /**
- * Get activities for a group
+ * Get activities for a group (with pagination)
  */
-const getGroupActivities = async (groupId, limit = 20) => {
-  return Activity.find({ group: groupId })
+const getGroupActivities = async (groupId, options = {}) => {
+  const { limit = 20, page = 1, cursor = null } = options;
+
+  const query = { group: groupId };
+  const cursorQuery = cursor ? buildCursorQuery(cursor, 'next', 'createdAt', -1) : {};
+  const finalQuery = { ...query, ...cursorQuery };
+
+  const activities = await Activity.find(finalQuery)
     .populate('user', 'name email')
     .populate('data.fromUser', 'name')
     .populate('data.toUser', 'name')
     .sort({ createdAt: -1 })
-    .limit(limit);
+    .limit(limit + 1);
+
+  const hasMore = activities.length > limit;
+  if (hasMore) activities.pop();
+
+  const total = cursor ? null : await Activity.countDocuments(query);
+
+  return paginatedResponse(activities, { limit, page, cursor, total });
 };
 
 module.exports = { logActivity, getUserActivities, getGroupActivities };

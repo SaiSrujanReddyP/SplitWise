@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { calculateSplit, validateSplit } = require('../../shared');
 const balanceService = require('./balanceService');
 const activityService = require('./activityService');
+const { buildCursorQuery, paginatedResponse } = require('../utils/pagination');
 
 const createExpense = async (data) => {
   const { description, amount, paidBy, groupId, splitType, participants, date } = data;
@@ -54,10 +55,10 @@ const createExpense = async (data) => {
 
   // Update balances
   if (groupId) {
-    await balanceService.updateBalances(groupId, paidBy, splits);
+    await balanceService.updateBalances(groupId, paidBy, splits, expense._id);
   } else {
     // Non-group expense - update direct balances
-    await balanceService.updateDirectBalances(paidBy, splits);
+    await balanceService.updateDirectBalances(paidBy, splits, expense._id);
   }
 
   // Log activity
@@ -72,16 +73,31 @@ const createExpense = async (data) => {
   return expense.populate(['paidBy', 'participants.userId', 'splits.userId']);
 };
 
-const getExpensesByGroup = async (groupId, userId) => {
+const getExpensesByGroup = async (groupId, userId, options = {}) => {
+  const { limit = 20, page = 1, cursor = null } = options;
+
   const group = await Group.findOne({ _id: groupId, members: userId });
   if (!group) {
     throw new Error('Group not found');
   }
 
-  return Expense.find({ group: groupId })
+  const query = { group: groupId };
+  const cursorQuery = cursor ? buildCursorQuery(cursor, 'next', 'date', -1) : {};
+  const finalQuery = { ...query, ...cursorQuery };
+
+  const expenses = await Expense.find(finalQuery)
     .populate('paidBy', 'name email')
     .populate('participants.userId', 'name email')
-    .sort({ date: -1, createdAt: -1 });
+    .sort({ date: -1, createdAt: -1 })
+    .limit(limit + 1);
+
+  const hasMore = expenses.length > limit;
+  if (hasMore) expenses.pop();
+
+  // Get total for offset pagination
+  const total = cursor ? null : await Expense.countDocuments(query);
+
+  return paginatedResponse(expenses, { limit, page, cursor, total });
 };
 
 const getExpenseById = async (expenseId, userId) => {
@@ -102,19 +118,33 @@ const getExpenseById = async (expenseId, userId) => {
   return expense;
 };
 
-const getUserExpenses = async (userId, limit = 20) => {
-  return Expense.find({
+const getUserExpenses = async (userId, options = {}) => {
+  const { limit = 20, page = 1, cursor = null } = options;
+
+  const query = {
     $or: [
       { paidBy: userId },
       { 'participants.userId': userId },
       { 'splits.userId': userId }
     ]
-  })
+  };
+
+  const cursorQuery = cursor ? buildCursorQuery(cursor, 'next', 'date', -1) : {};
+  const finalQuery = { ...query, ...cursorQuery };
+
+  const expenses = await Expense.find(finalQuery)
     .populate('paidBy', 'name email')
     .populate('group', 'name')
     .populate('participants.userId', 'name email')
     .sort({ date: -1, createdAt: -1 })
-    .limit(limit);
+    .limit(limit + 1);
+
+  const hasMore = expenses.length > limit;
+  if (hasMore) expenses.pop();
+
+  const total = cursor ? null : await Expense.countDocuments(query);
+
+  return paginatedResponse(expenses, { limit, page, cursor, total });
 };
 
 const searchUsers = async (query, excludeUserId) => {

@@ -1,4 +1,5 @@
 const groupService = require('../services/groupService');
+const { parsePaginationParams } = require('../utils/pagination');
 
 const createGroup = async (req, res) => {
   try {
@@ -12,8 +13,9 @@ const createGroup = async (req, res) => {
 
 const getGroups = async (req, res) => {
   try {
-    const groups = await groupService.getGroups(req.userId);
-    res.json(groups);
+    const { limit, page, cursor } = parsePaginationParams(req.query);
+    const result = await groupService.getGroups(req.userId, { limit, page, cursor });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
