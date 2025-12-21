@@ -9,13 +9,20 @@ const client = axios.create({
 });
 
 const handleError = (err) => {
+  if (err.response?.status === 429) {
+    throw new Error('Rate limited - please wait a moment and try again');
+  }
   if (err.response?.data?.error) {
     throw new Error(err.response.data.error);
+  }
+  if (err.code === 'ECONNREFUSED') {
+    throw new Error('Cannot connect to server. Is it running?');
   }
   throw err;
 };
 
 module.exports = {
+  // Auth
   async login(email, password) {
     try {
       const { data } = await client.post('/auth/login', { email, password });
@@ -34,6 +41,7 @@ module.exports = {
     }
   },
 
+  // Groups
   async createGroup(name, members) {
     try {
       const { data } = await client.post('/groups', { name, members });
@@ -43,9 +51,12 @@ module.exports = {
     }
   },
 
-  async getGroups() {
+  async getGroups(options = {}) {
     try {
-      const { data } = await client.get('/groups');
+      const params = new URLSearchParams();
+      if (options.limit) params.append('limit', options.limit);
+      if (options.cursor) params.append('cursor', options.cursor);
+      const { data } = await client.get(`/groups?${params}`);
       return data;
     } catch (err) {
       handleError(err);
@@ -70,9 +81,12 @@ module.exports = {
     }
   },
 
-  async getGroupExpenses(groupId) {
+  async getGroupExpenses(groupId, options = {}) {
     try {
-      const { data } = await client.get(`/groups/${groupId}/expenses`);
+      const params = new URLSearchParams();
+      if (options.limit) params.append('limit', options.limit);
+      if (options.cursor) params.append('cursor', options.cursor);
+      const { data } = await client.get(`/groups/${groupId}/expenses?${params}`);
       return data;
     } catch (err) {
       handleError(err);
@@ -88,10 +102,13 @@ module.exports = {
     }
   },
 
-  async addExpense({ groupId, amount, description, splitType, participants }) {
+  // Expenses
+  async addExpense({ groupId, amount, description, splitType, participants, date }) {
     try {
-      const payload = { groupId, amount, description, splitType };
+      const payload = { amount, description, splitType };
+      if (groupId) payload.groupId = groupId;
       if (participants) payload.participants = participants;
+      if (date) payload.date = date;
       const { data } = await client.post('/expenses', payload);
       return data;
     } catch (err) {
@@ -99,9 +116,40 @@ module.exports = {
     }
   },
 
+  async getMyExpenses(options = {}) {
+    try {
+      const params = new URLSearchParams();
+      if (options.limit) params.append('limit', options.limit);
+      if (options.cursor) params.append('cursor', options.cursor);
+      const { data } = await client.get(`/expenses/mine?${params}`);
+      return data;
+    } catch (err) {
+      handleError(err);
+    }
+  },
+
+  async searchUsers(query) {
+    try {
+      const { data } = await client.get(`/expenses/search-users?q=${encodeURIComponent(query)}`);
+      return data;
+    } catch (err) {
+      handleError(err);
+    }
+  },
+
+  // Balances
   async getBalances() {
     try {
       const { data } = await client.get('/balances');
+      return data;
+    } catch (err) {
+      handleError(err);
+    }
+  },
+
+  async getBalanceDetails(userId) {
+    try {
+      const { data } = await client.get(`/balances/details/${userId}`);
       return data;
     } catch (err) {
       handleError(err);
@@ -135,9 +183,23 @@ module.exports = {
     }
   },
 
-  async getActivities(limit = 20) {
+  // Activities
+  async getActivities(options = {}) {
     try {
-      const { data } = await client.get(`/activities?limit=${limit}`);
+      const params = new URLSearchParams();
+      if (options.limit) params.append('limit', options.limit);
+      if (options.cursor) params.append('cursor', options.cursor);
+      const { data } = await client.get(`/activities?${params}`);
+      return data;
+    } catch (err) {
+      handleError(err);
+    }
+  },
+
+  // Health check
+  async getHealth() {
+    try {
+      const { data } = await axios.get(`${BASE_URL.replace('/api', '')}/health`);
       return data;
     } catch (err) {
       handleError(err);

@@ -10,7 +10,8 @@ program
   .description('CLI for expense sharing application')
   .version('1.0.0');
 
-// Auth commands
+// ==================== AUTH COMMANDS ====================
+
 program
   .command('login')
   .description('Login to the application')
@@ -39,12 +40,15 @@ program
       const result = await api.signup(options.name, options.email, options.password);
       console.log(chalk.green('✓ Account created!'));
       console.log(chalk.cyan('Token:'), result.token);
+      console.log(chalk.yellow('\nSet this token in your environment:'));
+      console.log(chalk.white(`set EXPENSE_CLI_TOKEN=${result.token}`));
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
   });
 
-// Group commands
+// ==================== GROUP COMMANDS ====================
+
 program
   .command('create-group <name>')
   .description('Create a new group')
@@ -63,9 +67,13 @@ program
 program
   .command('groups')
   .description('List all groups')
-  .action(async () => {
+  .option('-l, --limit <number>', 'Number of groups to show', '20')
+  .option('-c, --cursor <cursor>', 'Pagination cursor for next page')
+  .action(async (options) => {
     try {
-      const groups = await api.getGroups();
+      const result = await api.getGroups({ limit: options.limit, cursor: options.cursor });
+      const groups = result.data || result;
+      
       if (groups.length === 0) {
         console.log(chalk.yellow('No groups found'));
         return;
@@ -82,6 +90,14 @@ program
 
       console.log(chalk.bold('\n📁 Your Groups\n'));
       console.log(table.toString());
+
+      // Show pagination info
+      if (result.pagination) {
+        console.log(chalk.gray(`\nShowing ${groups.length} groups`));
+        if (result.pagination.hasMore) {
+          console.log(chalk.yellow(`More available. Use: expense-cli groups -c "${result.pagination.nextCursor}"`));
+        }
+      }
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
@@ -90,19 +106,21 @@ program
 program
   .command('group <groupId>')
   .description('View group details')
-  .action(async (groupId) => {
+  .option('-l, --limit <number>', 'Number of expenses to show', '10')
+  .action(async (groupId, options) => {
     try {
       const group = await api.getGroup(groupId);
-      const expenses = await api.getGroupExpenses(groupId);
+      const expenseResult = await api.getGroupExpenses(groupId, { limit: options.limit });
+      const expenses = expenseResult.data || expenseResult;
       const balances = await api.getGroupBalances(groupId);
 
       console.log(chalk.bold(`\n📁 ${group.name}\n`));
 
       // Members table
       const membersTable = new Table({
-        head: [chalk.cyan('Member'), chalk.cyan('Email')],
+        head: [chalk.cyan('Member'), chalk.cyan('Email'), chalk.cyan('ID')],
       });
-      group.members.forEach(m => membersTable.push([m.name, m.email]));
+      group.members.forEach(m => membersTable.push([m.name, m.email, m._id]));
       console.log(chalk.bold('Members:'));
       console.log(membersTable.toString());
 
@@ -116,9 +134,11 @@ program
         });
         for (const [debtor, creditors] of Object.entries(balances)) {
           for (const [creditor, amount] of Object.entries(creditors)) {
-            const debtorName = group.members.find(m => m._id === debtor)?.name || debtor;
-            const creditorName = group.members.find(m => m._id === creditor)?.name || creditor;
-            balanceTable.push([debtorName, creditorName, `$${amount.toFixed(2)}`]);
+            if (amount > 0) {
+              const debtorName = group.members.find(m => m._id === debtor)?.name || debtor;
+              const creditorName = group.members.find(m => m._id === creditor)?.name || creditor;
+              balanceTable.push([debtorName, creditorName, `$${amount.toFixed(2)}`]);
+            }
           }
         }
         console.log(balanceTable.toString());
@@ -130,12 +150,17 @@ program
         console.log(chalk.gray('  No expenses yet'));
       } else {
         const expenseTable = new Table({
-          head: [chalk.cyan('Description'), chalk.cyan('Amount'), chalk.cyan('Paid By'), chalk.cyan('Split')],
+          head: [chalk.cyan('Description'), chalk.cyan('Amount'), chalk.cyan('Paid By'), chalk.cyan('Split'), chalk.cyan('Date')],
         });
-        expenses.slice(0, 10).forEach(e => {
-          expenseTable.push([e.description, `$${e.amount.toFixed(2)}`, e.paidBy?.name || 'Unknown', e.splitType]);
+        expenses.forEach(e => {
+          const date = new Date(e.date || e.createdAt).toLocaleDateString();
+          expenseTable.push([e.description, `$${e.amount.toFixed(2)}`, e.paidBy?.name || 'Unknown', e.splitType, date]);
         });
         console.log(expenseTable.toString());
+
+        if (expenseResult.pagination?.hasMore) {
+          console.log(chalk.yellow(`\nMore expenses available. Use: expense-cli expenses -g ${groupId} -c "${expenseResult.pagination.nextCursor}"`));
+        }
       }
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
@@ -156,16 +181,17 @@ program
     }
   });
 
+// ==================== EXPENSE COMMANDS ====================
 
-// Expense commands
 program
   .command('add-expense')
-  .description('Add an expense to a group')
-  .requiredOption('-g, --group <groupId>', 'Group ID')
+  .description('Add an expense (group or direct)')
+  .option('-g, --group <groupId>', 'Group ID (optional for direct expenses)')
   .requiredOption('-a, --amount <amount>', 'Expense amount')
   .requiredOption('-d, --description <desc>', 'Expense description')
   .option('-s, --split <type>', 'Split type: equal, exact, percentage', 'equal')
-  .option('-p, --participants <data>', 'JSON array for exact/percentage splits')
+  .option('-p, --participants <data>', 'JSON array for participants/splits')
+  .option('--date <date>', 'Expense date (YYYY-MM-DD)')
   .action(async (options) => {
     try {
       let participants = null;
@@ -174,10 +200,17 @@ program
           participants = JSON.parse(options.participants);
         } catch (e) {
           console.error(chalk.red('✗ Invalid JSON for participants'));
-          console.log(chalk.yellow('Example for exact:'), '[{"userId":"abc","amount":50}]');
-          console.log(chalk.yellow('Example for percentage:'), '[{"userId":"abc","percentage":30}]');
+          console.log(chalk.yellow('Example for equal:'), '[{"userId":"abc123"}]');
+          console.log(chalk.yellow('Example for exact:'), '[{"userId":"abc123","amount":50}]');
+          console.log(chalk.yellow('Example for percentage:'), '[{"userId":"abc123","percentage":30}]');
           return;
         }
+      }
+
+      if (!options.group && !participants) {
+        console.error(chalk.red('✗ For direct expenses, you must specify participants'));
+        console.log(chalk.yellow('Use: expense-cli search-users <query> to find user IDs'));
+        return;
       }
       
       const expense = await api.addExpense({
@@ -185,17 +218,20 @@ program
         amount: parseFloat(options.amount),
         description: options.description,
         splitType: options.split,
-        participants
+        participants,
+        date: options.date
       });
 
       console.log(chalk.green('✓ Expense added:'), chalk.bold(expense.description));
       console.log(chalk.gray('Amount:'), `$${expense.amount.toFixed(2)}`);
       console.log(chalk.gray('Split type:'), expense.splitType);
+      console.log(chalk.gray('Type:'), expense.group ? 'Group expense' : 'Direct expense');
 
       if (expense.splits && expense.splits.length > 0) {
         console.log(chalk.gray('Splits:'));
         expense.splits.forEach(s => {
-          console.log(chalk.gray(`  • ${s.userId}: $${s.amount.toFixed(2)}`));
+          const name = s.userId?.name || s.userId;
+          console.log(chalk.gray(`  • ${name}: $${s.amount.toFixed(2)}`));
         });
       }
     } catch (err) {
@@ -203,7 +239,95 @@ program
     }
   });
 
-// Balance commands
+program
+  .command('expenses')
+  .description('List your expenses')
+  .option('-g, --group <groupId>', 'Filter by group ID')
+  .option('-l, --limit <number>', 'Number of expenses to show', '20')
+  .option('-c, --cursor <cursor>', 'Pagination cursor for next page')
+  .action(async (options) => {
+    try {
+      let result;
+      if (options.group) {
+        result = await api.getGroupExpenses(options.group, { limit: options.limit, cursor: options.cursor });
+      } else {
+        result = await api.getMyExpenses({ limit: options.limit, cursor: options.cursor });
+      }
+      
+      const expenses = result.data || result;
+
+      if (expenses.length === 0) {
+        console.log(chalk.yellow('No expenses found'));
+        return;
+      }
+
+      const table = new Table({
+        head: [chalk.cyan('Description'), chalk.cyan('Amount'), chalk.cyan('Paid By'), chalk.cyan('Group'), chalk.cyan('Split'), chalk.cyan('Date')],
+      });
+
+      expenses.forEach(e => {
+        const date = new Date(e.date || e.createdAt).toLocaleDateString();
+        table.push([
+          e.description,
+          `$${e.amount.toFixed(2)}`,
+          e.paidBy?.name || 'Unknown',
+          e.group?.name || 'Direct',
+          e.splitType,
+          date
+        ]);
+      });
+
+      console.log(chalk.bold('\n💸 Your Expenses\n'));
+      console.log(table.toString());
+
+      if (result.pagination) {
+        console.log(chalk.gray(`\nShowing ${expenses.length} expenses`));
+        if (result.pagination.hasMore) {
+          console.log(chalk.yellow(`More available. Use: expense-cli expenses -c "${result.pagination.nextCursor}"`));
+        }
+      }
+    } catch (err) {
+      console.error(chalk.red('✗ Error:'), err.message);
+    }
+  });
+
+// ==================== USER SEARCH ====================
+
+program
+  .command('search-users <query>')
+  .description('Search for users by name or email')
+  .action(async (query) => {
+    try {
+      if (query.length < 2) {
+        console.log(chalk.yellow('Query must be at least 2 characters'));
+        return;
+      }
+
+      const users = await api.searchUsers(query);
+
+      if (users.length === 0) {
+        console.log(chalk.yellow('No users found'));
+        return;
+      }
+
+      const table = new Table({
+        head: [chalk.cyan('Name'), chalk.cyan('Email'), chalk.cyan('ID')],
+      });
+
+      users.forEach(u => {
+        table.push([u.name, u.email, u._id]);
+      });
+
+      console.log(chalk.bold('\n👥 Users Found\n'));
+      console.log(table.toString());
+      console.log(chalk.gray('\nUse the ID for direct expenses or adding to groups'));
+    } catch (err) {
+      console.error(chalk.red('✗ Error:'), err.message);
+    }
+  });
+
+// ==================== BALANCE COMMANDS ====================
+
 program
   .command('balances')
   .description('View your balances')
@@ -228,10 +352,14 @@ program
       if (balances.owes.length > 0) {
         console.log(chalk.bold.red('\n📤 You Owe:'));
         const owesTable = new Table({
-          head: [chalk.cyan('To'), chalk.cyan('Amount')],
+          head: [chalk.cyan('To'), chalk.cyan('Amount'), chalk.cyan('User ID')],
         });
         balances.owes.forEach(item => {
-          owesTable.push([item.user?.name || 'Unknown', chalk.red(`$${item.amount.toFixed(2)}`)]);
+          owesTable.push([
+            item.user?.name || 'Unknown',
+            chalk.red(`$${item.amount.toFixed(2)}`),
+            item.to || item.user?._id || ''
+          ]);
         });
         console.log(owesTable.toString());
       }
@@ -240,10 +368,14 @@ program
       if (balances.owed.length > 0) {
         console.log(chalk.bold.green('\n📥 Owed to You:'));
         const owedTable = new Table({
-          head: [chalk.cyan('From'), chalk.cyan('Amount')],
+          head: [chalk.cyan('From'), chalk.cyan('Amount'), chalk.cyan('User ID')],
         });
         balances.owed.forEach(item => {
-          owedTable.push([item.user?.name || 'Unknown', chalk.green(`$${item.amount.toFixed(2)}`)]);
+          owedTable.push([
+            item.user?.name || 'Unknown',
+            chalk.green(`$${item.amount.toFixed(2)}`),
+            item.from || item.user?._id || ''
+          ]);
         });
         console.log(owedTable.toString());
       }
@@ -251,12 +383,51 @@ program
       if (balances.owes.length === 0 && balances.owed.length === 0) {
         console.log(chalk.green('\n✓ All settled up!'));
       }
+
+      console.log(chalk.gray('\nUse: expense-cli balance-details <userId> to see expense breakdown'));
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
   });
 
-// Settlement suggestions
+program
+  .command('balance-details <userId>')
+  .description('View detailed expenses contributing to a balance')
+  .action(async (userId) => {
+    try {
+      const details = await api.getBalanceDetails(userId);
+
+      if (details.length === 0) {
+        console.log(chalk.yellow('No expense details found for this user'));
+        return;
+      }
+
+      console.log(chalk.bold('\n📋 Balance Details\n'));
+
+      const table = new Table({
+        head: [chalk.cyan('Description'), chalk.cyan('Total'), chalk.cyan('Your Share'), chalk.cyan('Paid By'), chalk.cyan('Group'), chalk.cyan('Date')],
+      });
+
+      details.forEach(e => {
+        const date = new Date(e.date).toLocaleDateString();
+        table.push([
+          e.description,
+          `$${e.amount.toFixed(2)}`,
+          `$${e.splitAmount.toFixed(2)}`,
+          e.paidBy?.name || 'Unknown',
+          e.group?.name || 'Direct',
+          date
+        ]);
+      });
+
+      console.log(table.toString());
+    } catch (err) {
+      console.error(chalk.red('✗ Error:'), err.message);
+    }
+  });
+
+// ==================== SETTLEMENT COMMANDS ====================
+
 program
   .command('settlements')
   .description('View settlement suggestions (minimal transactions to settle all debts)')
@@ -290,6 +461,7 @@ program
 
       console.log(table.toString());
       console.log(chalk.gray(`\nTotal transactions: ${settlements.length}`));
+      console.log(chalk.gray('Use: expense-cli settle -g <groupId> -t <creditorId> -a <amount>'));
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
@@ -297,32 +469,39 @@ program
 
 program
   .command('settle')
-  .description('Settle a balance')
-  .requiredOption('-g, --group <groupId>', 'Group ID')
+  .description('Settle a balance (group or direct)')
   .requiredOption('-t, --to <userId>', 'User ID to settle with (creditor)')
   .requiredOption('-a, --amount <amount>', 'Amount to settle')
+  .option('-g, --group <groupId>', 'Group ID (use "direct" for non-group settlements)')
   .action(async (options) => {
     try {
+      const groupId = options.group || 'direct';
+      
       await api.settle({
-        groupId: options.group,
+        groupId,
         creditorId: options.to,
         amount: parseFloat(options.amount)
       });
+
       console.log(chalk.green('✓ Settlement recorded!'));
       console.log(chalk.gray(`Settled $${parseFloat(options.amount).toFixed(2)}`));
+      console.log(chalk.gray(`Type: ${groupId === 'direct' ? 'Direct settlement' : 'Group settlement'}`));
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
   });
 
-// Activity command
+// ==================== ACTIVITY COMMANDS ====================
+
 program
   .command('activity')
   .description('View recent activity')
   .option('-l, --limit <number>', 'Number of activities to show', '10')
+  .option('-c, --cursor <cursor>', 'Pagination cursor for next page')
   .action(async (options) => {
     try {
-      const activities = await api.getActivities(parseInt(options.limit));
+      const result = await api.getActivities({ limit: options.limit, cursor: options.cursor });
+      const activities = result.data || result;
       
       console.log(chalk.bold('\n📋 Recent Activity\n'));
 
@@ -342,15 +521,19 @@ program
         switch (a.type) {
           case 'expense_added':
             type = chalk.blue('Expense');
-            desc = `${a.data?.description} - $${a.data?.amount?.toFixed(2)}`;
+            desc = `${a.data?.description || 'Unknown'} - $${(a.data?.amount || 0).toFixed(2)}`;
             break;
           case 'settlement':
             type = chalk.green('Settlement');
-            desc = `$${a.data?.amount?.toFixed(2)} to ${a.data?.toUser?.name || 'someone'}`;
+            desc = `$${(a.data?.amount || 0).toFixed(2)} to ${a.data?.toUser?.name || 'someone'}`;
             break;
           case 'group_created':
-            type = chalk.purple('Group');
-            desc = `Created "${a.data?.groupName}"`;
+            type = chalk.magenta('Group');
+            desc = `Created "${a.data?.groupName || 'Unknown'}"`;
+            break;
+          case 'member_added':
+            type = chalk.yellow('Member');
+            desc = `Added to "${a.data?.groupName || 'Unknown'}"`;
             break;
           default:
             type = a.type;
@@ -362,9 +545,110 @@ program
       });
 
       console.log(table.toString());
+
+      if (result.pagination) {
+        console.log(chalk.gray(`\nShowing ${activities.length} activities`));
+        if (result.pagination.hasMore) {
+          console.log(chalk.yellow(`More available. Use: expense-cli activity -c "${result.pagination.nextCursor}"`));
+        }
+      }
     } catch (err) {
       console.error(chalk.red('✗ Error:'), err.message);
     }
+  });
+
+// ==================== HEALTH CHECK ====================
+
+program
+  .command('health')
+  .description('Check server health and status')
+  .action(async () => {
+    try {
+      const health = await api.getHealth();
+      
+      console.log(chalk.bold('\n🏥 Server Health\n'));
+
+      const statusTable = new Table();
+      statusTable.push(
+        { [chalk.cyan('Status')]: health.status === 'ok' ? chalk.green('✓ OK') : chalk.red('✗ Error') },
+        { [chalk.cyan('Timestamp')]: health.timestamp }
+      );
+      console.log(statusTable.toString());
+
+      // Services
+      if (health.services) {
+        console.log(chalk.bold('\nServices:'));
+        const servicesTable = new Table();
+        servicesTable.push(
+          { [chalk.cyan('Redis')]: health.services.redis === 'connected' 
+            ? chalk.green('✓ Connected') 
+            : chalk.yellow('⚠ Disconnected (using fallback)') },
+          { [chalk.cyan('Active Locks')]: health.services.locks.toString() }
+        );
+        console.log(servicesTable.toString());
+      }
+
+      // Queues
+      if (health.queues) {
+        console.log(chalk.bold('\nJob Queues:'));
+        const queuesTable = new Table({
+          head: [chalk.cyan('Queue'), chalk.cyan('Processed'), chalk.cyan('Failed'), chalk.cyan('Pending')],
+        });
+        
+        for (const [name, stats] of Object.entries(health.queues)) {
+          queuesTable.push([
+            name,
+            chalk.green(stats.processed.toString()),
+            stats.failed > 0 ? chalk.red(stats.failed.toString()) : '0',
+            stats.pending > 0 ? chalk.yellow(stats.pending.toString()) : '0'
+          ]);
+        }
+        console.log(queuesTable.toString());
+      }
+    } catch (err) {
+      console.error(chalk.red('✗ Server unreachable:'), err.message);
+    }
+  });
+
+// ==================== HELP ====================
+
+program
+  .command('examples')
+  .description('Show usage examples')
+  .action(() => {
+    console.log(chalk.bold('\n📖 Usage Examples\n'));
+    
+    console.log(chalk.cyan('Authentication:'));
+    console.log('  expense-cli signup -n "John Doe" -e john@example.com -p password123');
+    console.log('  expense-cli login -e john@example.com -p password123');
+    
+    console.log(chalk.cyan('\nGroups:'));
+    console.log('  expense-cli create-group "Trip to Paris" -m alice@example.com bob@example.com');
+    console.log('  expense-cli groups');
+    console.log('  expense-cli group <groupId>');
+    console.log('  expense-cli add-member -g <groupId> -e charlie@example.com');
+    
+    console.log(chalk.cyan('\nExpenses (Group):'));
+    console.log('  expense-cli add-expense -g <groupId> -a 120 -d "Dinner" -s equal');
+    console.log('  expense-cli add-expense -g <groupId> -a 100 -d "Groceries" -s exact -p \'[{"userId":"abc","amount":60}]\'');
+    console.log('  expense-cli add-expense -g <groupId> -a 200 -d "Hotel" -s percentage -p \'[{"userId":"abc","percentage":40}]\'');
+    
+    console.log(chalk.cyan('\nExpenses (Direct - no group):'));
+    console.log('  expense-cli search-users "alice"');
+    console.log('  expense-cli add-expense -a 50 -d "Coffee" -s equal -p \'[{"userId":"<userId>"}]\'');
+    
+    console.log(chalk.cyan('\nBalances & Settlements:'));
+    console.log('  expense-cli balances');
+    console.log('  expense-cli balance-details <userId>');
+    console.log('  expense-cli settlements');
+    console.log('  expense-cli settlements -g <groupId>');
+    console.log('  expense-cli settle -t <creditorId> -a 50 -g <groupId>');
+    console.log('  expense-cli settle -t <creditorId> -a 50  # Direct settlement');
+    
+    console.log(chalk.cyan('\nOther:'));
+    console.log('  expense-cli activity -l 20');
+    console.log('  expense-cli health');
+    console.log('  expense-cli expenses -l 10');
   });
 
 program.parse();

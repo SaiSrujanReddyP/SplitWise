@@ -291,8 +291,13 @@ Output: A pays B $30, A pays C $10, B pays C $0 (simplified)
 - Formatted tables with cli-table3
 - All CRUD operations for groups and expenses
 - Balance viewing and settlement
-- Activity feed
+- Activity feed with pagination
 - All split types supported
+- User search for direct expenses
+- Balance details breakdown
+- Direct (non-group) settlements
+- Server health check
+- Pagination support with cursors
 
 ---
 
@@ -431,6 +436,57 @@ npm run dev
 cd cli
 npm install
 npm link
+expense-cli --help
+```
+
+## CLI Commands
+
+```bash
+# Authentication
+expense-cli signup -n "John" -e john@example.com -p password123
+expense-cli login -e john@example.com -p password123
+
+# Groups (with pagination)
+expense-cli create-group "Trip to Paris" -m alice@example.com
+expense-cli groups
+expense-cli groups -l 10 -c <cursor>  # Pagination
+expense-cli group <groupId>
+expense-cli add-member -g <groupId> -e friend@example.com
+
+# Expenses - Group (all split types)
+expense-cli add-expense -g <groupId> -a 100 -d "Dinner" -s equal
+expense-cli add-expense -g <groupId> -a 100 -d "Groceries" -s exact -p '[{"userId":"...","amount":60}]'
+expense-cli add-expense -g <groupId> -a 100 -d "Rent" -s percentage -p '[{"userId":"...","percentage":40}]'
+
+# Expenses - Direct (no group)
+expense-cli search-users "alice"  # Find user IDs
+expense-cli add-expense -a 50 -d "Coffee" -s equal -p '[{"userId":"..."}]'
+
+# List expenses (with pagination)
+expense-cli expenses
+expense-cli expenses -g <groupId>
+expense-cli expenses -l 10 -c <cursor>
+
+# Balances & Details
+expense-cli balances
+expense-cli balance-details <userId>  # See expense breakdown
+
+# Settlements
+expense-cli settlements
+expense-cli settlements -g <groupId>
+expense-cli settle -t <creditorId> -a 50 -g <groupId>  # Group settlement
+expense-cli settle -t <creditorId> -a 50               # Direct settlement
+
+# Activity (with pagination)
+expense-cli activity
+expense-cli activity -l 20
+expense-cli activity -c <cursor>
+
+# Server health & status
+expense-cli health
+
+# Help & examples
+expense-cli examples
 expense-cli --help
 ```
 
