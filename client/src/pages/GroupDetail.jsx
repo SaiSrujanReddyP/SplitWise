@@ -28,9 +28,12 @@ export default function GroupDetail() {
         groupApi.getSettlements(id)
       ]);
       setGroup(groupRes.data);
-      setExpenses(expensesRes.data);
+      // Handle both paginated { data: [...] } and direct array responses
+      const expensesData = expensesRes.data?.data || expensesRes.data;
+      const settlementsData = settlementsRes.data?.data || settlementsRes.data;
+      setExpenses(Array.isArray(expensesData) ? expensesData : []);
       setBalances(balancesRes.data);
-      setSettlements(settlementsRes.data);
+      setSettlements(Array.isArray(settlementsData) ? settlementsData : []);
     } catch (err) {
       console.error('Error:', err);
     } finally {

@@ -26,10 +26,15 @@ export default function Settlements() {
         activityApi.get(20)
       ]);
       setBalances(balanceRes.data);
-      setGroups(groupRes.data);
-      setSettlements(settlementsRes.data);
+      // Handle both paginated { data: [...] } and direct array responses
+      const groupData = groupRes.data?.data || groupRes.data;
+      const settlementsData = settlementsRes.data?.data || settlementsRes.data;
+      const activityData = activityRes.data?.data || activityRes.data;
+      setGroups(Array.isArray(groupData) ? groupData : []);
+      setSettlements(Array.isArray(settlementsData) ? settlementsData : []);
       // Filter only settlement activities
-      setRecentSettlements(activityRes.data.filter(a => a.type === 'settlement'));
+      const activities = Array.isArray(activityData) ? activityData : [];
+      setRecentSettlements(activities.filter(a => a.type === 'settlement'));
     } catch (err) {
       console.error('Error:', err);
     } finally {

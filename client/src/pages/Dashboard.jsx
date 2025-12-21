@@ -26,8 +26,11 @@ export default function Dashboard() {
         activityApi.get(10)
       ]);
       setBalances(balanceRes.data);
-      setGroups(groupRes.data);
-      setRecentActivity(activityRes.data);
+      // Handle both paginated { data: [...] } and direct array responses
+      const groupData = groupRes.data?.data || groupRes.data;
+      const activityData = activityRes.data?.data || activityRes.data;
+      setGroups(Array.isArray(groupData) ? groupData : []);
+      setRecentActivity(Array.isArray(activityData) ? activityData : []);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
