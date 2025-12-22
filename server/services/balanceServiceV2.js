@@ -17,7 +17,7 @@
 const Balance = require('../models/Balance');
 const User = require('../models/User');
 const Group = require('../models/Group');
-const { BalanceCalculator } = require('../../shared');
+const { BalanceCalculator } = require('../shared');
 const { withLock } = require('../utils/distributedLock');
 const { cache, cacheKeys } = require('../config/redis');
 const { queueCacheInvalidation, queueActivityLog } = require('./queueService');

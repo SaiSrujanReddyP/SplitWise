@@ -27,10 +27,16 @@ const initializeServices = async () => {
 };
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:3000'],
+  credentials: true
+}));
 app.use(compression()); // Gzip compression for responses
 app.use(express.json({ limit: '10kb' })); // Limit body size
 app.use(generalLimiter); // Global rate limiting
+
+// Trust proxy for rate limiting behind reverse proxy
+app.set('trust proxy', 1);
 
 // Request logging (simple APM)
 app.use((req, res, next) => {

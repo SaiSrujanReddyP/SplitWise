@@ -6,6 +6,11 @@ A simplified expense sharing application inspired by Splitwise, built with clean
 
 [Watch the demo video](https://drive.google.com/drive/folders/1qyoizCf-V5HbVXZ5XO61jybXqvsWK80z?usp=sharing)
 
+## 🌐 Live Demo
+
+- **Frontend**: [https://www.runelabs.dev](https://www.runelabs.dev)
+- **API**: [https://api.runelabs.dev](https://api.runelabs.dev/health)
+
 ## Architecture Overview
 
 ```
@@ -330,11 +335,17 @@ server/
 │   ├── settlementService.js   # Greedy algorithm
 │   ├── activityService.js     # With pagination
 │   └── queueService.js        # NEW: Background jobs
+├── shared/                    # Business logic (self-contained for deployment)
+│   ├── balanceCalculator.js
+│   ├── splitCalculator.js
+│   └── index.js
 ├── utils/
 │   ├── lockManager.js         # Legacy in-memory locks
 │   ├── distributedLock.js     # NEW: Redis-based locks
 │   ├── pagination.js          # NEW: Cursor pagination
 │   └── queue.js               # NEW: Job queue
+├── Procfile                   # Railway process file
+├── railway.json               # Railway config
 └── index.js                   # With compression, rate limiting
 ```
 
@@ -621,3 +632,4 @@ Response:
 - **CLI**: Commander.js, Chalk, cli-table3
 - **Auth**: JWT (JSON Web Tokens)
 - **Compression**: gzip
+- **Hosting**: Vercel (frontend), Railway (backend)

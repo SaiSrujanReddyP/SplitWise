@@ -1,7 +1,7 @@
 const Expense = require('../models/Expense');
 const Group = require('../models/Group');
 const User = require('../models/User');
-const { calculateSplit, validateSplit } = require('../../shared');
+const { calculateSplit, validateSplit } = require('../shared');
 const balanceService = require('./balanceService');
 const activityService = require('./activityService');
 const { buildCursorQuery, paginatedResponse } = require('../utils/pagination');
