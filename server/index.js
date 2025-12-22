@@ -26,9 +26,19 @@ const initializeServices = async () => {
   initQueues();
 };
 
+// Parse CORS origins from environment variable
+const getCorsOrigins = () => {
+  const origins = process.env.CORS_ORIGIN;
+  if (!origins) {
+    return ['http://localhost:5173', 'http://localhost:3000'];
+  }
+  // Split comma-separated origins and trim whitespace
+  return origins.split(',').map(origin => origin.trim());
+};
+
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:3000'],
+  origin: getCorsOrigins(),
   credentials: true
 }));
 app.use(compression()); // Gzip compression for responses
