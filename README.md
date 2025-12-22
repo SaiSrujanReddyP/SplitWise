@@ -8,7 +8,7 @@ A simplified expense sharing application inspired by Splitwise, built with clean
 
 ## 🌐 Live Demo
 
-- **Frontend**: [https://www.runelabs.dev](https://www.runelabs.dev)
+- **Website**: [https://www.runelabs.dev](https://www.runelabs.dev)
 - **API**: [https://api.runelabs.dev](https://api.runelabs.dev/health)
 
 ## Architecture Overview

@@ -134,8 +134,9 @@ const deleteGroup = async (groupId, userId) => {
     throw new Error('Group not found');
   }
 
-  // Only creator can delete the group
-  if (group.createdBy.toString() !== userId) {
+  // Only creator can delete the group (compare as strings)
+  const creatorId = group.createdBy?._id?.toString() || group.createdBy?.toString();
+  if (creatorId !== userId.toString()) {
     throw new Error('Only the group creator can delete this group');
   }
 
