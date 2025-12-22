@@ -15,13 +15,11 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Indexes
-// Email lookup (login) - unique index
-userSchema.index({ email: 1 }, { unique: true });
-
+// Note: email already has unique index from schema definition (unique: true)
 // Text search for user search feature
 userSchema.index({ name: 'text', email: 'text' });
 
-// Case-insensitive search
+// Name index for search
 userSchema.index({ name: 1 });
 
 // Hash password before saving
