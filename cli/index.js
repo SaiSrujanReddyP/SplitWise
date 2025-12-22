@@ -543,6 +543,10 @@ program
             type = chalk.magenta('Group');
             desc = `Created "${a.data?.groupName || 'Unknown'}"`;
             break;
+          case 'group_deleted':
+            type = chalk.red('Group');
+            desc = `Deleted "${a.data?.groupName || 'Unknown'}"`;
+            break;
           case 'member_added':
             type = chalk.yellow('Member');
             desc = `Added to "${a.data?.groupName || 'Unknown'}"`;

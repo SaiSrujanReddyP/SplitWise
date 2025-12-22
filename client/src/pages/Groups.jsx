@@ -48,9 +48,12 @@ export default function Groups() {
     if (!confirm(`Are you sure you want to delete "${groupName}"?`)) return;
     try {
       await groupApi.delete(groupId);
-      fetchGroups();
+      // Immediately remove from local state for instant UI feedback
+      setGroups(prev => prev.filter(g => g._id !== groupId));
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to delete group');
+      // Refresh to get actual state if error
+      fetchGroups();
     }
   };
 

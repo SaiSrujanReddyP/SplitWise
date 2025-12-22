@@ -61,6 +61,8 @@ export default function Dashboard() {
         return `${activity.data?.fromUser?.name || activity.user?.name} paid ${activity.data?.toUser?.name || 'someone'} $${activity.data?.amount?.toFixed(2)}`;
       case 'group_created':
         return `Created group "${activity.data?.groupName}"`;
+      case 'group_deleted':
+        return `Deleted group "${activity.data?.groupName}"`;
       case 'member_added':
         return `Added member to "${activity.data?.groupName}"`;
       default:
@@ -209,11 +211,13 @@ export default function Dashboard() {
                         ${activity.type === 'expense_added' ? 'bg-blue-500' : ''}
                         ${activity.type === 'settlement' ? 'bg-green-500' : ''}
                         ${activity.type === 'group_created' ? 'bg-purple-500' : ''}
+                        ${activity.type === 'group_deleted' ? 'bg-red-500' : ''}
                         ${activity.type === 'member_added' ? 'bg-orange-500' : ''}
                       `}>
                         {activity.type === 'expense_added' && '$'}
                         {activity.type === 'settlement' && '✓'}
                         {activity.type === 'group_created' && '+'}
+                        {activity.type === 'group_deleted' && '🗑️'}
                         {activity.type === 'member_added' && '👤'}
                       </div>
                       <div className="flex-1">
