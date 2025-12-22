@@ -40,4 +40,13 @@ const addMember = async (req, res) => {
   }
 };
 
-module.exports = { createGroup, getGroups, getGroupById, addMember };
+const deleteGroup = async (req, res) => {
+  try {
+    await groupService.deleteGroup(req.params.id, req.userId);
+    res.json({ message: 'Group deleted successfully' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+module.exports = { createGroup, getGroups, getGroupById, addMember, deleteGroup };

@@ -11,6 +11,7 @@ router.use(auth);
 // Write operations
 router.post('/', writeLimiter, groupController.createGroup);
 router.post('/:id/members', writeLimiter, groupController.addMember);
+router.delete('/:id', writeLimiter, groupController.deleteGroup);
 
 // Read operations
 router.get('/', groupController.getGroups);

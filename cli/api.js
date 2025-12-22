@@ -81,6 +81,15 @@ module.exports = {
     }
   },
 
+  async deleteGroup(groupId) {
+    try {
+      const { data } = await client.delete(`/groups/${groupId}`);
+      return data;
+    } catch (err) {
+      handleError(err);
+    }
+  },
+
   async getGroupExpenses(groupId, options = {}) {
     try {
       const params = new URLSearchParams();

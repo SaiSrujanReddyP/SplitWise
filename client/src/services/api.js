@@ -21,6 +21,7 @@ export const groups = {
   getAll: () => api.get('/groups'),
   getById: (id) => api.get(`/groups/${id}`),
   create: (name, members) => api.post('/groups', { name, members }),
+  delete: (id) => api.delete(`/groups/${id}`),
   addMember: (id, email) => api.post(`/groups/${id}/members`, { email }),
   getExpenses: (id) => api.get(`/groups/${id}/expenses`),
   getBalances: (id) => api.get(`/groups/${id}/balances`),

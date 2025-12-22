@@ -51,7 +51,9 @@ export default function AddExpenseModal({ isOpen, onClose, onSuccess, preselecte
   const fetchGroups = async () => {
     try {
       const { data } = await groupApi.getAll();
-      setGroups(data);
+      // Handle both paginated { data: [...] } and direct array responses
+      const groupData = data?.data || data;
+      setGroups(Array.isArray(groupData) ? groupData : []);
     } catch (err) {
       console.error('Error fetching groups:', err);
     }

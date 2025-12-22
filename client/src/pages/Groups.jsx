@@ -7,6 +7,7 @@ export default function Groups() {
   const [showModal, setShowModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -28,7 +29,9 @@ export default function Groups() {
 
   const handleCreateGroup = async (e) => {
     e.preventDefault();
+    if (creating) return; // Prevent double submission
     setError('');
+    setCreating(true);
     try {
       await groupApi.create(newGroupName, []);
       setNewGroupName('');
@@ -36,6 +39,18 @@ export default function Groups() {
       fetchGroups();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create group');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId, groupName) => {
+    if (!confirm(`Are you sure you want to delete "${groupName}"?`)) return;
+    try {
+      await groupApi.delete(groupId);
+      fetchGroups();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete group');
     }
   };
 
@@ -58,17 +73,25 @@ export default function Groups() {
       {groups.length > 0 ? (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {groups.map((group) => (
-            <Link
+            <div
               key={group._id}
-              to={`/groups/${group._id}`}
-              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition"
+              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition relative"
             >
-              <h3 className="text-lg font-semibold mb-2">{group.name}</h3>
-              <p className="text-gray-600">{group.members.length} members</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Created by {group.createdBy?.name}
-              </p>
-            </Link>
+              <Link to={`/groups/${group._id}`}>
+                <h3 className="text-lg font-semibold mb-2">{group.name}</h3>
+                <p className="text-gray-600">{group.members.length} members</p>
+                <p className="text-sm text-gray-500 mt-2">
+                  Created by {group.createdBy?.name}
+                </p>
+              </Link>
+              <button
+                onClick={() => handleDeleteGroup(group._id, group.name)}
+                className="absolute top-2 right-2 text-gray-400 hover:text-red-600 p-1"
+                title="Delete group"
+              >
+                🗑️
+              </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -110,9 +133,10 @@ export default function Groups() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                  disabled={creating}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
                 >
-                  Create
+                  {creating ? 'Creating...' : 'Create'}
                 </button>
               </div>
             </form>

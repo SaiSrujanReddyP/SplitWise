@@ -128,4 +128,30 @@ const addMember = async (groupId, userId, memberEmail) => {
   return group.populate('members', 'name email');
 };
 
-module.exports = { createGroup, getGroups, getGroupById, addMember };
+const deleteGroup = async (groupId, userId) => {
+  const group = await Group.findOne({ _id: groupId });
+  if (!group) {
+    throw new Error('Group not found');
+  }
+
+  // Only creator can delete the group
+  if (group.createdBy.toString() !== userId) {
+    throw new Error('Only the group creator can delete this group');
+  }
+
+  await Group.deleteOne({ _id: groupId });
+
+  // Log activity
+  queueActivityLog('group_deleted', userId, {
+    groupId: group._id,
+    groupName: group.name
+  });
+
+  // Invalidate caches for all members
+  for (const memberId of group.members) {
+    queueCacheInvalidation({ userId: memberId.toString() });
+  }
+  await cache.invalidate(`group:${groupId}`);
+};
+
+module.exports = { createGroup, getGroups, getGroupById, addMember, deleteGroup };

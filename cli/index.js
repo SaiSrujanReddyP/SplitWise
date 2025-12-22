@@ -181,6 +181,18 @@ program
     }
   });
 
+program
+  .command('delete-group <groupId>')
+  .description('Delete a group (only creator can delete)')
+  .action(async (groupId) => {
+    try {
+      await api.deleteGroup(groupId);
+      console.log(chalk.green('✓ Group deleted successfully'));
+    } catch (err) {
+      console.error(chalk.red('✗ Error:'), err.message);
+    }
+  });
+
 // ==================== EXPENSE COMMANDS ====================
 
 program
@@ -627,6 +639,7 @@ program
     console.log('  expense-cli groups');
     console.log('  expense-cli group <groupId>');
     console.log('  expense-cli add-member -g <groupId> -e charlie@example.com');
+    console.log('  expense-cli delete-group <groupId>');
     
     console.log(chalk.cyan('\nExpenses (Group):'));
     console.log('  expense-cli add-expense -g <groupId> -a 120 -d "Dinner" -s equal');
