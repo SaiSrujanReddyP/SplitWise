@@ -1,4 +1,3 @@
-const Redlock = require('redlock');
 const { getRedis, isRedisConnected } = require('../config/redis');
 
 /**
@@ -21,7 +20,7 @@ const memoryLocks = new Map();
 
 let redlock = null;
 
-const initDistributedLock = () => {
+const initDistributedLock = async () => {
   const redis = getRedis();
   
   if (!redis) {
@@ -29,24 +28,31 @@ const initDistributedLock = () => {
     return;
   }
 
-  redlock = new Redlock([redis], {
-    // Retry settings
-    retryCount: 10,
-    retryDelay: 200, // ms
-    retryJitter: 200, // ms
+  try {
+    // Redlock v5 uses ES modules, dynamically import it
+    const { default: Redlock } = await import('redlock');
     
-    // Lock settings
-    automaticExtensionThreshold: 500 // ms before expiry to auto-extend
-  });
+    redlock = new Redlock([redis], {
+      // Retry settings
+      retryCount: 10,
+      retryDelay: 200, // ms
+      retryJitter: 200, // ms
+      
+      // Lock settings
+      automaticExtensionThreshold: 500 // ms before expiry to auto-extend
+    });
 
-  redlock.on('error', (err) => {
-    // Ignore resource unavailable errors (lock contention)
-    if (err.name !== 'ResourceLockedError') {
-      console.error('Redlock error:', err.message);
-    }
-  });
+    redlock.on('error', (err) => {
+      // Ignore resource unavailable errors (lock contention)
+      if (err.name !== 'ResourceLockedError') {
+        console.error('Redlock error:', err.message);
+      }
+    });
 
-  console.log('✅ Distributed lock manager initialized');
+    console.log('✅ Distributed lock manager initialized');
+  } catch (err) {
+    console.log('⚠️  Redlock initialization failed, using in-memory locks:', err.message);
+  }
 };
 
 /**

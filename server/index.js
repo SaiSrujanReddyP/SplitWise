@@ -19,8 +19,8 @@ const initializeServices = async () => {
   // Initialize Redis (optional - graceful fallback if unavailable)
   initRedis();
   
-  // Initialize distributed lock manager
-  initDistributedLock();
+  // Initialize distributed lock manager (async for dynamic import)
+  await initDistributedLock();
   
   // Initialize job queues
   initQueues();
